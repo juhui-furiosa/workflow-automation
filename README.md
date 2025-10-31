@@ -28,6 +28,13 @@ If you have access to the FurisoaAI LLM API endpoint or a dedicated RNGD server,
 - LLM:
    - [furiosa-ai/Llama-3.1-8B-Instruct](https://huggingface.co/furiosa-ai/Llama-3.1-8B-Instruct) 
 
+## Language Support
+This AI Workflow Automator supports both Korean and English languages:
+- 🇰🇷 Korean: 오늘 일정 요약해서 슬랙에 보내고 노션에도 기록해
+- 🇺🇸 English: Summarize today’s schedule and send it to Slack and Notion.
+
+You can interact with the system using either language for your workflow automation needs.
+
 ## Usage
 
 Execute the `.py` file using the command below to test the recipe for building an AI Workflow Automator that connects calendar data with Slack and Notion through natural language commands.  

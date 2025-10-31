@@ -80,7 +80,7 @@ def llm_chat(prompt: str, max_tokens: int = 512, temperature: float = 0.2) -> st
     payload = {
         "model": model,
         "messages": [
-            {"role":"system","content":"You are a precise Korean assistant. Always follow JSON/output format when asked."},
+            {"role":"system","content":"You are a precise assistant. Always reply in the user's language (Korean if Korean present else English). Maintain concise style and respect JSON format when requested."},
             {"role":"user","content": prompt}
         ],
         "max_tokens": max_tokens,
@@ -153,18 +153,25 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         })
     return sorted(out, key=lambda x: x["start"])
 
-def summarize_events_ko(events: List[Dict[str, Any]]) -> str:
+def summarize_events(events: List[Dict[str, Any]], lang: str) -> str:
     raw = json.dumps(events, ensure_ascii=False, indent=2)
-    prompt = f"""
-아래 일정 JSON을 한국어로 간결하게 요약해 주세요. 
-- 오늘의 주요 일정 헤더 1줄
-- 항목별로 • 불릿 3~8개
-- 시간(로컬), 제목, 장소(있으면) 포함
-- 문장은 짧고 명확하게
-
-JSON:
-{raw}
-"""
+    if lang == "ko":
+        instr = (
+            "아래 일정 JSON을 한국어로 간결하게 요약해 주세요.\n"
+            "- 오늘의 주요 일정 헤더 1줄\n"
+            "- 항목별로 • 불릿 3~8개\n"
+            "- 시간(로컬), 제목, 장소(있으면) 포함\n"
+            "- 문장은 짧고 명확하게"
+        )
+    else:
+        instr = (
+            "Summarize the schedule JSON in concise English.\n"
+            "- First line: short header for today's key schedule\n"
+            "- Bullet points (•) 3-8 items\n"
+            "- Include local time, title, location(if any)\n"
+            "- Sentences short and clear"
+        )
+    prompt = f"{instr}\n\nJSON:\n{raw}\n"
     return llm_chat(prompt, max_tokens=400, temperature=0.2).strip()
 
 def post_to_slack(text: str) -> Dict[str, Any]:
@@ -176,7 +183,7 @@ def post_to_slack(text: str) -> Dict[str, Any]:
     ok = r.status_code in (200, 204)
     return {"ok": ok, "status": r.status_code, "text": r.text if not ok else "OK"}
 
-def write_to_notion(text: str) -> Dict[str, Any]:
+def write_to_notion(text: str, lang: str = "ko") -> Dict[str, Any]:
     if not NOTION_TOKEN:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         with open(OUT / "notion_log.md", "a", encoding="utf-8") as f:
@@ -189,7 +196,10 @@ def write_to_notion(text: str) -> Dict[str, Any]:
         "Notion-Version": "2022-06-28",
         "Content-Type": "application/json"
     }
-    title_str = datetime.now().strftime("%Y-%m-%d 일정 요약 보고")
+    if lang == "ko":
+        title_str = datetime.now().strftime("%Y-%m-%d 일정 요약 보고")
+    else:
+        title_str = datetime.now().strftime("%Y-%m-%d Schedule Summary")
     today_iso = datetime.now().date().isoformat()
 
     if NOTION_DB_ID:
@@ -238,39 +248,62 @@ def write_to_notion(text: str) -> Dict[str, Any]:
             f.write(f"\n## {now} (Notion 실패)\n{text}\n")
     return {"ok": ok, "status": r.status_code, "text": r.text if not ok else "OK"}
 
-def plan_from_nl(user_text: str) -> Dict[str, Any]:
-    prompt = f"""
-다음 한국어 명령을 읽고, 수행할 워크플로우 계획을 JSON으로만 출력하세요.
-가능한 action: 
+def plan_from_nl(user_text: str, lang: str) -> Dict[str, Any]:
+        if lang == "ko":
+                prompt = f"""
+다음 명령을 읽고 워크플로우 계획을 JSON으로만 출력하세요.
+가능한 action:
 - "calendar_summary": 오늘/내일/이번주 일정 요약 → 슬랙 → 노션 기록
 - "noop": 아무 작업 없음
 
 명령: "{user_text}"
 
-형식(반드시 이 키만):
+형식(이 키만):
 {{
-  "action": "calendar_summary" | "noop",
-  "params": {{
-    "days": 1,        // 1(오늘), 2(오늘+내일), 7(이번주) 등
-    "post_to_slack": true,
-    "write_to_notion": true
-  }}
+    "action": "calendar_summary" | "noop",
+    "params": {{
+        "days": 1,
+        "post_to_slack": true,
+        "write_to_notion": true
+    }}
 }}
 """
-    raw = llm_chat(prompt, max_tokens=300, temperature=0.1)
-    try:
-        return extract_json(raw)
-    except Exception:
-        # fallback: best effort heuristic
-        lowered = user_text.lower()
-        action = "calendar_summary" if ("일정" in user_text or "스케줄" in user_text) else "noop"
-        return {"action": action, "params": {"days": 1, "post_to_slack": True, "write_to_notion": True}}
+        else:
+                prompt = f"""
+Read the command and output ONLY a JSON workflow plan.
+Allowed actions:
+- "calendar_summary": summarize today's / tomorrow's / week's schedule → send to Slack → record to Notion
+- "noop": do nothing
+
+Command: "{user_text}"
+
+Format (ONLY these keys):
+{{
+    "action": "calendar_summary" | "noop",
+    "params": {{
+        "days": 1,
+        "post_to_slack": true,
+        "write_to_notion": true
+    }}
+}}
+"""
+        raw = llm_chat(prompt, max_tokens=300, temperature=0.1)
+        try:
+                return extract_json(raw)
+        except Exception:
+                lowered = user_text.lower()
+                if lang == "ko":
+                        action = "calendar_summary" if ("일정" in user_text or "스케줄" in user_text) else "noop"
+                else:
+                        action = "calendar_summary" if ("schedule" in lowered or "calendar" in lowered) else "noop"
+                return {"action": action, "params": {"days": 1, "post_to_slack": True, "write_to_notion": True}}
 
 
 from typing import TypedDict
 
 class WFState(TypedDict, total=False):
     user_text: str
+    lang: str
     plan: Dict[str, Any]
     events: List[Dict[str, Any]]
     summary: str
@@ -278,10 +311,15 @@ class WFState(TypedDict, total=False):
     notion_result: Dict[str, Any]
     error: str
 
+HANGUL_RE = re.compile(r"[\u3131-\u318E\uAC00-\uD7A3]")
+def detect_language(text: str) -> str:
+    return "ko" if HANGUL_RE.search(text) else "en"
+
 def node_plan(state: WFState) -> WFState:
-    plan = plan_from_nl(state["user_text"])
-    rprint(f"[dim]Plan → {plan}[/dim]")
-    return {"plan": plan}
+    lang = detect_language(state["user_text"])
+    plan = plan_from_nl(state["user_text"], lang)
+    rprint(f"[dim]Plan(lang={lang}) → {plan}[/dim]")
+    return {"plan": plan, "lang": lang}
 
 def node_calendar(state: WFState) -> WFState:
     p = state.get("plan", {})
@@ -297,9 +335,10 @@ def node_calendar(state: WFState) -> WFState:
 
 def node_summarize(state: WFState) -> WFState:
     ev = state.get("events", [])
-    summary = "일정이 없습니다."
+    lang = state.get("lang", "ko")
+    summary = "일정이 없습니다." if lang == "ko" else "No events."
     if ev:
-        summary = summarize_events_ko(ev)
+        summary = summarize_events(ev, lang)
     return {"summary": summary}
 
 def node_slack(state: WFState) -> WFState:
@@ -307,7 +346,8 @@ def node_slack(state: WFState) -> WFState:
     return {"slack_result": res}
 
 def node_notion(state: WFState) -> WFState:
-    res = write_to_notion(state.get("summary",""))
+    lang = state.get("lang", "ko")
+    res = write_to_notion(state.get("summary",""), lang=lang)
     return {"notion_result": res}
 
 def should_do_calendar(state: WFState) -> Literal["calendar","end"]:
@@ -359,12 +399,15 @@ def run_once(nl_command: str):
             "events_count": len(final.get("events", [])),
             "slack": final.get("slack_result"),
             "notion": final.get("notion_result")})
-    rprint("\n[bold]요약:[/bold]\n" + final.get("summary","(없음)"))
+    lang = final.get("lang", "ko")
+    header = "요약" if lang == "ko" else "Summary"
+    none_text = "(없음)" if lang == "ko" else "(none)"
+    rprint(f"\n[bold]{header}:[/bold]\n" + final.get("summary", none_text))
 
 if __name__ == "__main__":
-    rprint("[green]AI Workflow Automator (LangGraph) – 로컬 데모[/green]")
-    rprint("예) 내 일정 요약해서 슬랙에 보내고 노션에도 기록해")
-    text = input("\n명령을 입력하세요 > ").strip()
+    rprint("[green]AI Workflow Automator (LangGraph) – Local Demo[/green]")
+    rprint("예) 오늘 일정 요약해서 슬랙에 보내고 노션에도 기록해 / e.g. Summarize today’s schedule and send it to Slack and Notion.")
+    text = input("\n명령(Command) > ").strip()
     if not text:
         text = "오늘 일정 요약해서 슬랙에도 보내고 노션에도 기록해"
     run_once(text)

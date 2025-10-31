@@ -12,12 +12,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from ics import Calendar
 
 BASE = Path(__file__).parent
-OUT = BASE / "out"
-OUT.mkdir(exist_ok=True)
 
 load_dotenv()
 FURIOSA_ENDPOINT = os.getenv("FURIOSA_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
-FURIOSA_MODEL = None  # to be auto-detected
+FURIOSA_MODEL = None # 자동 초기화
 ICAL_URL = os.getenv("ICAL_URL")
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
@@ -176,19 +174,17 @@ def summarize_events(events: List[Dict[str, Any]], lang: str) -> str:
 
 def post_to_slack(text: str) -> Dict[str, Any]:
     if not SLACK_WEBHOOK_URL:
-        # local fallback
-        (OUT / "slack_message.txt").write_text(text, encoding="utf-8")
-        return {"ok": False, "note": "SLACK_WEBHOOK_URL 없음 → out/slack_message.txt로 저장"}
-    r = requests.post(SLACK_WEBHOOK_URL, json={"text": text}, timeout=15)
-    ok = r.status_code in (200, 204)
-    return {"ok": ok, "status": r.status_code, "text": r.text if not ok else "OK"}
+        return {"ok": False, "note": "SLACK_WEBHOOK_URL 미설정"}
+    try:
+        r = requests.post(SLACK_WEBHOOK_URL, json={"text": text}, timeout=15)
+        ok = r.status_code in (200, 204)
+        return {"ok": ok, "status": r.status_code, "text": r.text if not ok else "OK"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 def write_to_notion(text: str, lang: str = "ko") -> Dict[str, Any]:
     if not NOTION_TOKEN:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        with open(OUT / "notion_log.md", "a", encoding="utf-8") as f:
-            f.write(f"\n## {now}\n{text}\n")
-        return {"ok": False, "note": "NOTION_TOKEN 없음 → out/notion_log.md"}
+        return {"ok": False, "note": "NOTION_TOKEN 미설정"}
 
     url = "https://api.notion.com/v1/pages"
     headers = {
@@ -222,10 +218,7 @@ def write_to_notion(text: str, lang: str = "ko") -> Dict[str, Any]:
         }
     else:
         if not NOTION_PAGE_ID:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M")
-            with open(OUT / "notion_log.md", "a", encoding="utf-8") as f:
-                f.write(f"\n## {now}\n{text}\n")
-            return {"ok": False, "note": "NOTION_PAGE_ID/DB_ID 없음 → out/notion_log.md"}
+            return {"ok": False, "note": "NOTION_PAGE_ID/DB_ID 미설정"}
         payload = {
             "parent": {"type":"page_id","page_id": NOTION_PAGE_ID},
             "properties": {
@@ -238,15 +231,12 @@ def write_to_notion(text: str, lang: str = "ko") -> Dict[str, Any]:
                 }
             ]
         }
-    r = requests.post(url, headers=headers, json=payload, timeout=20)
-    ok = r.status_code in (200, 201)
-    if not ok:
-        rprint(f"[yellow]Notion 생성 실패 {r.status_code}: {r.text[:200]}[/yellow]")
-        # local fallback copy
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        with open(OUT / "notion_log.md", "a", encoding="utf-8") as f:
-            f.write(f"\n## {now} (Notion 실패)\n{text}\n")
-    return {"ok": ok, "status": r.status_code, "text": r.text if not ok else "OK"}
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        ok = r.status_code in (200, 201)
+        return {"ok": ok, "status": r.status_code, "text": r.text if not ok else "OK"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 def plan_from_nl(user_text: str, lang: str) -> Dict[str, Any]:
         if lang == "ko":

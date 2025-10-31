@@ -52,7 +52,7 @@ python main.py
 ```
 workflow_automation/
 │
-├── main.py                  # Main execution file
-├── requirements.txt          # Dependencies list
-├── .env                      # Environment variables
-└── README.md                 # Project documentation
+├── main.py                  
+├── requirements.txt          
+├── .env                     
+└── README.md

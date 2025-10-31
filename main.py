@@ -405,9 +405,41 @@ def run_once(nl_command: str):
     rprint(f"\n[bold]{header}:[/bold]\n" + final.get("summary", none_text))
 
 if __name__ == "__main__":
-    rprint("[green]AI Workflow Automator (LangGraph) – Local Demo[/green]")
-    rprint("예) 오늘 일정 요약해서 슬랙에 보내고 노션에도 기록해 / e.g. Summarize today’s schedule and send it to Slack and Notion.")
-    text = input("\n명령(Command) > ").strip()
-    if not text:
-        text = "오늘 일정 요약해서 슬랙에도 보내고 노션에도 기록해"
-    run_once(text)
+    import subprocess
+
+    def is_llm_ready():
+        try:
+            resp = requests.get("http://127.0.0.1:8000/v1/models", timeout=2)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    llm_proc = None
+    if not is_llm_ready():
+        rprint("[yellow]LLM 서버가 실행 중이 아닙니다. 자동으로 실행합니다...[/yellow]")
+        llm_cmd = [
+            "furiosa-llm", "serve", "furiosa-ai/Llama-3.1-8B-Instruct-FP8", "--devices", "npu:1"
+        ]
+        llm_proc = subprocess.Popen(llm_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Wait for server to be ready
+        for _ in range(60):
+            if is_llm_ready():
+                rprint("[green]LLM 서버가 준비되었습니다![/green]")
+                break
+            time.sleep(1)
+        else:
+            rprint("[red]LLM 서버가 60초 내에 준비되지 않았습니다. 종료합니다.[/red]")
+            if llm_proc:
+                llm_proc.terminate()
+            exit(1)
+
+    try:
+        rprint("[green]AI Workflow Automator (LangGraph) – Local Demo[/green]")
+        rprint("예) 오늘 일정 요약해서 슬랙에 보내고 노션에도 기록해 / e.g. Summarize today’s schedule and send it to Slack and Notion.")
+        text = input("\n명령(Command) > ").strip()
+        if not text:
+            text = "오늘 일정 요약해서 슬랙에도 보내고 노션에도 기록해"
+        run_once(text)
+    finally:
+        if llm_proc:
+            llm_proc.terminate()

@@ -24,6 +24,19 @@ If you have access to the FurisoaAI LLM API endpoint or a dedicated RNGD server,
    pip install -r requirements.txt
 ```
 
+### Set Environment Variables
+Create a `.env` file in the project root based on `.env.example`:
+```
+   cp .env.example .env
+   vi .env
+```
+Then, fill in your credentials:
+- `SLACK_WEBHOOK_URL`: Slack webhook for posting summaries
+- `NOTION_TOKEN`: Notion API integration token
+- `NOTION_PAGE_ID`: Page ID to write summaries
+- `NOTION_DB_ID`: Database ID to write summaries
+- `ICAL_URL`: URL to an `.ics` calendar file
+
 ## Configuration
 - LLM:
    - [furiosa-ai/Llama-3.1-8B-Instruct](https://huggingface.co/furiosa-ai/Llama-3.1-8B-Instruct) 

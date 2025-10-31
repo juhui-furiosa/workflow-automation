@@ -53,8 +53,7 @@ You can interact with the system using either language for your workflow automat
 Execute the `.py` file using the command below to test the recipe for building an AI Workflow Automator that connects calendar data with Slack and Notion through natural language commands.  
 This project applies the concept of workflow orchestration using LangGraph to automatically summarize, post, and log daily schedules.
 
-You can enter any natural language instruction (e.g., “Summarize today’s schedule and send it to Slack and Notion”),  
-and the workflow will automatically plan, fetch, summarize, and execute the required actions.
+You can enter any natural language instruction (e.g., “Summarize today’s schedule and send it to Slack and Notion”), and the workflow will automatically plan, fetch, summarize, and execute the required actions.
 
 ```
 python main.py

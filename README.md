@@ -48,7 +48,7 @@ workflow_automation/
 ├── main.py                  # Main execution file
 ├── requirements.txt          # Dependencies list
 ├── .env                      # Environment variables
-└── out/
+└── out/                      # Output directory (created when failed to connect to APIs)
     ├── slack_message.txt     # Fallback Slack message file
     └── notion_log.md         # Fallback Notion log file
 ```

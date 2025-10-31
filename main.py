@@ -17,7 +17,7 @@ OUT.mkdir(exist_ok=True)
 
 load_dotenv()
 FURIOSA_ENDPOINT = os.getenv("FURIOSA_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
-FURIOSA_MODEL = os.getenv("FURIOSA_MODEL")
+FURIOSA_MODEL = None  # to be auto-detected
 ICAL_URL = os.getenv("ICAL_URL")
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()

@@ -17,11 +17,9 @@ BASE = Path(__file__).parent
 load_dotenv()
 FURIOSA_ENDPOINT = os.getenv("FURIOSA_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
 FURIOSA_MODEL = None # 자동 초기화
-ICAL_URL = os.getenv("ICAL_URL")
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip()
-NOTION_PAGE_ID = os.getenv("NOTION_PAGE_ID", "").strip()
 NOTION_DB_ID = os.getenv("NOTION_DB_ID", "").strip()
 NOTION_TITLE_PROP = "Title"
 NOTION_DATE_PROP = "Date"
@@ -39,12 +37,7 @@ def _canonical_uuid(s: str) -> str:
     return f"{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
 
 def _normalize_notion_ids():
-    global NOTION_PAGE_ID, NOTION_DB_ID
-    if NOTION_PAGE_ID:
-        canon = _canonical_uuid(NOTION_PAGE_ID)
-        if canon != NOTION_PAGE_ID:
-            rprint(f"[dim]Notion Page ID normalization: {canon}[/dim]")
-            NOTION_PAGE_ID = canon
+    global NOTION_DB_ID
     if NOTION_DB_ID:
         canon = _canonical_uuid(NOTION_DB_ID)
         if canon != NOTION_DB_ID:
@@ -108,21 +101,43 @@ def extract_json(s: str) -> Dict[str, Any]:
     return json.loads(m.group(0))
 
 def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    if not ICAL_URL:
-        return []
     cal_text = None
-    ics_path = Path(ICAL_URL)
-    if ics_path.exists():
+
+    default_local = BASE / "data" / "basic.ics"
+    if default_local.exists():
+        source = str(default_local)
+    else:
+        return []
+
+    # Interpret as local path if it looks like a path (exists or no scheme)
+    def _looks_like_path(s: str) -> bool:
+        return s.startswith("./") or s.startswith("../") or s.startswith("/") or (not re.match(r"^[a-zA-Z]+://", s))
+
+    path_candidate = None
+    if _looks_like_path(source):
+        # Try as absolute or relative to BASE
+        p = Path(source)
+        if not p.exists():
+            p2 = (BASE / source).resolve()
+            if p2.exists():
+                p = p2
+        if p.exists():
+            path_candidate = p
+
+    if path_candidate is not None and path_candidate.exists():
         try:
-            cal_text = ics_path.read_text(encoding="utf-8")
+            cal_text = path_candidate.read_text(encoding="utf-8")
+            rprint(f"[dim]Loaded ICS locally: {path_candidate}[/dim]")
         except Exception as e:
             rprint(f"[yellow]Fail to read local ICS: {e}[/yellow]")
             return []
     else:
+        # Fetch remote
         try:
-            resp = requests.get(ICAL_URL, timeout=20)
+            resp = requests.get(source, timeout=20)
             resp.raise_for_status()
             cal_text = resp.text
+            rprint(f"[dim]Fetched ICS remotely: {source}[/dim]")
         except Exception as e:
             rprint(f"[yellow]Fail to fetch ICS: {e}[/yellow]")
             return []
@@ -208,21 +223,6 @@ def write_to_notion(text: str, lang: str = "ko") -> Dict[str, Any]:
         payload = {
             "parent": {"type":"database_id","database_id": NOTION_DB_ID},
             "properties": properties,
-            "children": [
-                {
-                    "object":"block","type":"paragraph",
-                    "paragraph":{"rich_text":[{"type":"text","text":{"content": text}}]}
-                }
-            ]
-        }
-    else:
-        if not NOTION_PAGE_ID:
-            return {"ok": False, "note": "NOTION_PAGE_ID/DB_ID 미설정"}
-        payload = {
-            "parent": {"type":"page_id","page_id": NOTION_PAGE_ID},
-            "properties": {
-                "title": {"title":[{"text":{"content": title_str}}]}
-            },
             "children": [
                 {
                     "object":"block","type":"paragraph",

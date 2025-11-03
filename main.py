@@ -1,5 +1,6 @@
 import os, json, re, time, requests
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, List, Optional, Literal
 from pathlib import Path
 
@@ -24,6 +25,10 @@ NOTION_PAGE_ID = os.getenv("NOTION_PAGE_ID", "").strip()
 NOTION_DB_ID = os.getenv("NOTION_DB_ID", "").strip()
 NOTION_TITLE_PROP = "Title"
 NOTION_DATE_PROP = "Date"
+
+# Timezone settings
+TZ = ZoneInfo("Asia/Seoul")
+TZ_LABEL = "KST"
 
 UUID32_RE = re.compile(r"([0-9a-fA-F]{32})")
 def _canonical_uuid(s: str) -> str:
@@ -127,9 +132,9 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         rprint(f"[yellow]ICS 파싱 실패: {e}[/yellow]")
         return []
 
-    tz = timezone.utc
-    now = start or datetime.now(tz)
-    end = now + timedelta(days=days)
+    utc = timezone.utc
+    now_utc = (start or datetime.now(utc)).astimezone(utc)
+    end_utc = now_utc + timedelta(days=days)
 
     out = []
     for ev in cal.events:
@@ -141,36 +146,32 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         edt = e.datetime if hasattr(e, "datetime") else None
         if not bdt or not edt:
             continue
-        if edt < now or bdt > end:
+        if edt < now_utc or bdt > end_utc:
             continue
         out.append({
             "title": ev.name or "(제목 없음)",
-            "start": bdt.astimezone(tz).isoformat(),
-            "end": edt.astimezone(tz).isoformat(),
-            "location": getattr(ev, "location", "") or ""
+            "start": bdt.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+            "end": edt.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+            "location": getattr(ev, "location", "") or "",
+            "tz": TZ_LABEL
         })
     return sorted(out, key=lambda x: x["start"])
 
 def summarize_events(events: List[Dict[str, Any]], lang: str) -> str:
-    raw = json.dumps(events, ensure_ascii=False, indent=2)
-    if lang == "ko":
-        instr = (
-            "아래 일정 JSON을 한국어로 간결하게 요약해 주세요.\n"
-            "- 오늘의 주요 일정 헤더 1줄\n"
-            "- 항목별로 • 불릿 3~8개\n"
-            "- 시간(로컬), 제목, 장소(있으면) 포함\n"
-            "- 문장은 짧고 명확하게"
-        )
-    else:
-        instr = (
-            "Summarize the schedule JSON in concise English.\n"
-            "- First line: short header for today's key schedule\n"
-            "- Bullet points (•) 3-8 items\n"
-            "- Include local time, title, location(if any)\n"
-            "- Sentences short and clear"
-        )
-    prompt = f"{instr}\n\nJSON:\n{raw}\n"
-    return llm_chat(prompt, max_tokens=400, temperature=0.2).strip()
+    if not events:
+        return "일정이 없습니다." if lang == "ko" else "No events."
+    header = "오늘 일정 요약" if lang == "ko" else "Schedule Summary\n"
+    lines = [header]
+    for ev in events:
+        start = ev.get("start")  # 'YYYY-MM-DD HH:MM'
+        end = ev.get("end")
+        title = ev.get("title") or ("(제목 없음)" if lang == "ko" else "(No title)")
+        loc = ev.get("location")
+        seg = f"{start} - {end} ({TZ_LABEL}) {title}"
+        if loc:
+            seg += f" @ {loc}"
+        lines.append(f"• {seg}")
+    return "\n".join(lines)
 
 def post_to_slack(text: str) -> Dict[str, Any]:
     if not SLACK_WEBHOOK_URL:
@@ -193,17 +194,15 @@ def write_to_notion(text: str, lang: str = "ko") -> Dict[str, Any]:
         "Content-Type": "application/json"
     }
     if lang == "ko":
-        title_str = datetime.now().strftime("%Y-%m-%d 일정 요약 보고")
+        title_str = datetime.now().strftime("%Y-%m-%d 일정 요약 보고\n")
     else:
-        title_str = datetime.now().strftime("%Y-%m-%d Schedule Summary")
+        title_str = datetime.now().strftime("%Y-%m-%d Schedule Summary\n")
     today_iso = datetime.now().date().isoformat()
 
     if NOTION_DB_ID:
-        # Create in database
         properties = {
             NOTION_TITLE_PROP: {"title":[{"text":{"content": title_str}}]},
         }
-        # Add date property (date range single day)
         if NOTION_DATE_PROP:
             properties[NOTION_DATE_PROP] = {"date": {"start": today_iso}}
         payload = {
@@ -319,7 +318,7 @@ def node_calendar(state: WFState) -> WFState:
     if not events and days == 1:
         expanded = fetch_events_from_ical(days=30)
         if expanded:
-            state['plan']['params']['days'] = 30  # reflect adjusted window
+            state['plan']['params']['days'] = 30
             events = expanded
     return {"events": events}
 
@@ -380,10 +379,8 @@ def run_once(nl_command: str):
       run_once("내 일정 요약해서 슬랙에 보내고 노션에도 기록해")
     """
     state = {"user_text": nl_command}
-    # Provide configuration with thread_id for checkpointer
     config = {"configurable": {"thread_id": "main"}}
     final = app_graph.invoke(state, config=config)
-    # Pretty print result
     rprint("\n[bold cyan]=== 결과 ===[/bold cyan]")
     rprint({"plan": final.get("plan"),
             "events_count": len(final.get("events", [])),
@@ -406,7 +403,7 @@ if __name__ == "__main__":
 
     llm_proc = None
     if not is_llm_ready():
-        rprint("[yellow]LLM 서버가 실행 중이 아닙니다. 자동으로 실행합니다...[/yellow]")
+        rprint("[yellow]LLM server is not running. Starting it automatically...[/yellow]")
         llm_cmd = [
             "furiosa-llm", "serve", "furiosa-ai/Llama-3.1-8B-Instruct-FP8", "--devices", "npu:1"
         ]
@@ -414,11 +411,11 @@ if __name__ == "__main__":
         # Wait for server to be ready
         for _ in range(60):
             if is_llm_ready():
-                rprint("[green]LLM 서버가 준비되었습니다![/green]")
+                rprint("[green]LLM server is ready![/green]")
                 break
             time.sleep(1)
         else:
-            rprint("[red]LLM 서버가 60초 내에 준비되지 않았습니다. 종료합니다.[/red]")
+            rprint("[red]LLM server did not start within 60 seconds. Exiting.[/red]")
             if llm_proc:
                 llm_proc.terminate()
             exit(1)

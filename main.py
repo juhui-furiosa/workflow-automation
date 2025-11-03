@@ -43,12 +43,12 @@ def _normalize_notion_ids():
     if NOTION_PAGE_ID:
         canon = _canonical_uuid(NOTION_PAGE_ID)
         if canon != NOTION_PAGE_ID:
-            rprint(f"[dim]Notion Page ID 정규화: {canon}[/dim]")
+            rprint(f"[dim]Notion Page ID normalization: {canon}[/dim]")
             NOTION_PAGE_ID = canon
     if NOTION_DB_ID:
         canon = _canonical_uuid(NOTION_DB_ID)
         if canon != NOTION_DB_ID:
-            rprint(f"[dim]Notion DB ID 정규화: {canon}[/dim]")
+            rprint(f"[dim]Notion DB ID normalization: {canon}[/dim]")
             NOTION_DB_ID = canon
 
 _normalize_notion_ids()
@@ -71,10 +71,10 @@ def _ensure_model():
                         models.append(mid)
             if models:
                 FURIOSA_MODEL = models[0]
-                rprint(f"[dim]자동 선택된 모델: {FURIOSA_MODEL}[/dim]")
+                rprint(f"[dim]Automatically selected model: {FURIOSA_MODEL}[/dim]")
                 return FURIOSA_MODEL
     except Exception as e:
-        rprint(f"[red]모델 자동 선택 실패: {e}[/red]")
+        rprint(f"[red]Model auto-selection failed: {e}[/red]")
     FURIOSA_MODEL = "unknown-model"
     return FURIOSA_MODEL
 
@@ -92,12 +92,12 @@ def llm_chat(prompt: str, max_tokens: int = 512, temperature: float = 0.2) -> st
     try:
         r = requests.post(FURIOSA_ENDPOINT, json=payload, timeout=60)
         if r.status_code >= 400:
-            rprint(f"[red]LLM 요청 실패 {r.status_code}: {r.text[:300]}[/red]")
+            rprint(f"[red]Fail to request LLM {r.status_code}: {r.text[:300]}[/red]")
             raise requests.HTTPError(f"LLM error {r.status_code}")
         data = r.json()
         return data["choices"][0]["message"]["content"]
     except Exception as e:
-        rprint(f"[yellow]LLM 호출 오류, 폴백 사용: {e}[/yellow]")
+        rprint(f"[yellow]Fail to request LLM, fallback used: {e}[/yellow]")
         return "{\n  \"action\": \"noop\",\n  \"params\": {\n    \"days\": 1,\n    \"post_to_slack\": false,\n    \"write_to_notion\": false\n  }\n}"
 
 JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -116,7 +116,7 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         try:
             cal_text = ics_path.read_text(encoding="utf-8")
         except Exception as e:
-            rprint(f"[yellow].ics 로컬 파일 읽기 실패: {e}[/yellow]")
+            rprint(f"[yellow]Fail to read local ICS: {e}[/yellow]")
             return []
     else:
         try:
@@ -124,12 +124,12 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
             resp.raise_for_status()
             cal_text = resp.text
         except Exception as e:
-            rprint(f"[yellow]ICS 가져오기 실패: {e}[/yellow]")
+            rprint(f"[yellow]Fail to fetch ICS: {e}[/yellow]")
             return []
     try:
         cal = Calendar(cal_text)
     except Exception as e:
-        rprint(f"[yellow]ICS 파싱 실패: {e}[/yellow]")
+        rprint(f"[yellow]Fail to parse ICS: {e}[/yellow]")
         return []
 
     utc = timezone.utc
@@ -149,7 +149,7 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         if edt < now_utc or bdt > end_utc:
             continue
         out.append({
-            "title": ev.name or "(제목 없음)",
+            "title": ev.name or "No title",
             "start": bdt.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
             "end": edt.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
             "location": getattr(ev, "location", "") or "",
@@ -160,7 +160,7 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
 def summarize_events(events: List[Dict[str, Any]], lang: str) -> str:
     if not events:
         return "일정이 없습니다." if lang == "ko" else "No events."
-    header = "오늘 일정 요약" if lang == "ko" else "Schedule Summary\n"
+    header = "📆 오늘 일정 요약\n" if lang == "ko" else "📆 Schedule Summary\n"
     lines = [header]
     for ev in events:
         start = ev.get("start")  # 'YYYY-MM-DD HH:MM'
@@ -194,9 +194,9 @@ def write_to_notion(text: str, lang: str = "ko") -> Dict[str, Any]:
         "Content-Type": "application/json"
     }
     if lang == "ko":
-        title_str = datetime.now().strftime("%Y-%m-%d 일정 요약 보고\n")
+        title_str = datetime.now().strftime("%Y-%m-%d 📆 일정 요약 보고\n")
     else:
-        title_str = datetime.now().strftime("%Y-%m-%d Schedule Summary\n")
+        title_str = datetime.now().strftime("%Y-%m-%d 📆 Schedule Summary\n")
     today_iso = datetime.now().date().isoformat()
 
     if NOTION_DB_ID:

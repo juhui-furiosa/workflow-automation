@@ -67,4 +67,7 @@ workflow_automation/
 ├── main.py                  
 ├── requirements.txt          
 ├── .env                     
-└── README.md
+├── README.md
+└── data/
+    └── basic.ics   # sample calendar for demonstration
+

@@ -33,9 +33,9 @@ Create a `.env` file in the project root based on `.env.example`:
 Then, fill in your credentials:
 - `SLACK_WEBHOOK_URL`: Slack webhook for posting summaries
 - `NOTION_TOKEN`: Notion API integration token
-- `NOTION_PAGE_ID`: Page ID to write summaries
 - `NOTION_DB_ID`: Database ID to write summaries
-- `ICAL_URL`: URL to an `.ics` calendar file
+
+For a detailed guide on how to configure your `.env` file. Refer to this following page: [How to set up `.env` file](https://www.notion.so/How-to-setup-env-file-2a08a774a5258037a879eebba3f83bd9)
 
 ## Configuration
 - LLM:

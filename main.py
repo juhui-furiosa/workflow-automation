@@ -394,6 +394,22 @@ def run_once(nl_command: str):
 if __name__ == "__main__":
     import subprocess
 
+    def get_available_npu():
+        try:
+            # Run 'furiosa-smi info'
+            result = subprocess.run(["furiosa-smi", "info"], capture_output=True, text=True)
+
+            # Example match: "npu1" → group(1) = "1"
+            match = re.search(r"\bnpu(\d+)\b", result.stdout)
+            if match:
+                npu_id = match.group(1)
+                return f"npu:{npu_id}"
+
+        except Exception as e:
+            rprint(f"[red]Failed to detect NPU automatically: {e}[/red]")
+
+        return "npu:0"
+
     def is_llm_ready():
         try:
             resp = requests.get("http://127.0.0.1:8000/v1/models", timeout=2)
@@ -401,11 +417,12 @@ if __name__ == "__main__":
         except Exception:
             return False
 
+    npu_device = get_available_npu()
     llm_proc = None
     if not is_llm_ready():
         rprint("[yellow]LLM server is not running. Starting it automatically...[/yellow]")
         llm_cmd = [
-            "furiosa-llm", "serve", "furiosa-ai/Llama-3.1-8B-Instruct-FP8", "--devices", "npu:1"
+            "furiosa-llm", "serve", "furiosa-ai/Llama-3.1-8B-Instruct-FP8", "--devices", npu_device, "--port", "8000"
         ]
         llm_proc = subprocess.Popen(llm_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         # Wait for server to be ready

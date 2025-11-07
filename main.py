@@ -147,7 +147,6 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         rprint(f"[yellow]Fail to parse ICS with icalendar: {e}[/yellow]")
         return []
 
-    # 검색 윈도우(UTC 기준)
     utc = timezone.utc
     now_utc = (start or datetime.now(utc)).astimezone(utc)
     end_utc = now_utc + timedelta(days=days)

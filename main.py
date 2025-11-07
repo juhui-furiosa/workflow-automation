@@ -111,13 +111,11 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
     else:
         return []
 
-    # Interpret as local path if it looks like a path (exists or no scheme)
     def _looks_like_path(s: str) -> bool:
         return s.startswith("./") or s.startswith("../") or s.startswith("/") or (not re.match(r"^[a-zA-Z]+://", s))
 
     path_candidate = None
     if _looks_like_path(source):
-        # Try as absolute or relative to BASE
         p = Path(source)
         if not p.exists():
             p2 = (BASE / source).resolve()
@@ -134,7 +132,6 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
             rprint(f"[yellow]Fail to read local ICS: {e}[/yellow]")
             return []
     else:
-        # Fetch remote
         try:
             resp = requests.get(source, timeout=20)
             resp.raise_for_status()
@@ -144,7 +141,6 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
             rprint(f"[yellow]Fail to fetch ICS: {e}[/yellow]")
             return []
 
-    # ⬇️ 여기부터 icalendar + dateutil 기반으로 RRULE/RDATE/EXDATE 확장
     try:
         ical = ICalCalendar.from_ical(cal_text)
     except Exception as e:
@@ -157,12 +153,10 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
     end_utc = now_utc + timedelta(days=days)
 
     def to_aware(dt) -> datetime:
-        # icalendar의 .decoded는 tz-aware일 수도, 아닐 수도 있음 → 기본은 Asia/Seoul로 해석
         if isinstance(dt, datetime):
             if dt.tzinfo is None:
                 return dt.replace(tzinfo=TZ).astimezone(utc)
             return dt.astimezone(utc)
-        # all-day (date-only) 처리: 로컬 자정~자정+1 로 가정
         return datetime.combine(dt, datetime.min.time(), tzinfo=TZ).astimezone(utc)
 
     results: List[Dict[str, Any]] = []
@@ -173,7 +167,6 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         except Exception:
             continue
 
-        # 종료시각/지속시간 파악
         dtend_raw = comp.decoded("DTEND", default=None)
         duration_raw = comp.get("DURATION")
 
@@ -182,35 +175,26 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
             dtend = to_aware(dtend_raw)
             duration = dtend - dtstart
         elif duration_raw is not None:
-            # DURATION이 주어진 경우
-            # icalendar가 timedelta로 파싱해줌
             duration = duration_raw.dt if hasattr(duration_raw, "dt") else duration_raw
         else:
-            # 종료 미기재 시 1시간짜리로 가정
             duration = timedelta(hours=1)
 
         title = str(comp.get("SUMMARY", "No title"))
         location = str(comp.get("LOCATION", ""))
 
-        # 예외 날짜(제외)
         exdates: set[datetime] = set()
         for ex in comp.get("EXDATE", []):
             try:
-                # ex.dts는 icalendar v5에서 제공, v4에선 .dts가 없을 수 있어 fallback
                 seq = getattr(ex, "dts", None)
                 if seq is not None:
                     for d in seq:
                         exdates.add(to_aware(d.dt))
                 else:
-                    # bytes → component로 파싱되어 있을 수도 있음
                     exval = ex.to_ical()
-                    # 보수적으로: 여러 날짜가 들어올 수 있어 스플릿 불가 시 스킵
-                    # (복잡한 케이스는 드물어 간략화)
                     pass
             except Exception:
                 continue
 
-        # RDATE(추가 포함)
         rdates: List[datetime] = []
         for rd in comp.get("RDATE", []):
             try:
@@ -223,14 +207,11 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
 
         rrule_prop = comp.get("RRULE")
         if rrule_prop:
-            # RRULE을 문자열로 변환
             try:
-                rrule_bytes = rrule_prop.to_ical()  # e.g. b'FREQ=WEEKLY;BYDAY=MO,WE,FR'
+                rrule_bytes = rrule_prop.to_ical()
                 rrule_str = rrule_bytes.decode() if isinstance(rrule_bytes, (bytes, bytearray)) else str(rrule_bytes)
             except Exception:
-                # dict 형태일 수도 있음
                 if isinstance(rrule_prop, dict):
-                    # {'FREQ': ['WEEKLY'], 'BYDAY': ['MO','WE','FR']} → 'FREQ=WEEKLY;BYDAY=MO,WE,FR'
                     parts = []
                     for k, v in rrule_prop.items():
                         vv = v if isinstance(v, list) else [v]
@@ -239,16 +220,13 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
                 else:
                     rrule_str = str(rrule_prop)
 
-            # rrulestr는 'FREQ=…' 형태 그대로 받음
             rule = rrulestr(rrule_str, dtstart=dtstart.astimezone(utc))
 
-            # 검색구간의 발생 인스턴스 확장
             for occ in rule.between(now_utc, end_utc, inc=True):
                 if occ in exdates:
                     continue
                 start_utc = occ
                 end_utc_inst = start_utc + duration
-                # 윈도우 교차 판정
                 if end_utc_inst <= now_utc or start_utc >= end_utc:
                     continue
                 results.append({
@@ -259,7 +237,6 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
                     "tz": TZ_LABEL
                 })
 
-            # RDATE로 추가 포함된 단발 인스턴스도 확장
             for rdt in rdates:
                 start_utc_r = rdt
                 end_utc_r = start_utc_r + duration
@@ -276,7 +253,6 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
                 })
 
         else:
-            # 반복 아님: 단발 이벤트 윈도우 교차 여부로 포함
             start_utc = dtstart
             end_utc_inst = dtstart + duration if dtend_raw is None else to_aware(dtend_raw)
             if not (end_utc_inst <= now_utc or start_utc >= end_utc):
@@ -288,7 +264,6 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
                     "tz": TZ_LABEL
                 })
 
-    # 정렬
     return sorted(results, key=lambda x: (x["start"], x["end"], x["title"]))
 
 def summarize_events(events: List[Dict[str, Any]], lang: str) -> str:

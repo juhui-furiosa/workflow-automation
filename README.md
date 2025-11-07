@@ -4,7 +4,6 @@ This project is a LangGraph-based workflow automator that uses natural language 
 
 Example command:
 > Summarize today’s schedule and send it to Slack and Notion.
-
 ## Prerequisites
 If you have access to the FurisoaAI LLM API endpoint or a dedicated RNGD server, the only step you need to take before beginning the SDK cookbook is installing the necessary prerequisites for the FuriosaAI SDK stack. Please refer to the provided page to choose and set up your preferred version of the FuriosaAI SDK. Currently, this SDK cookbook is based on FuriosaAI SDK version 2025.3.0.
 - [Install Prerequisites for FuriosaAI SDK](https://developer.furiosa.ai/latest/en/get_started/prerequisites.html)
@@ -18,7 +17,7 @@ If you have access to the FurisoaAI LLM API endpoint or a dedicated RNGD server,
 ### Installation
 ```
    git clone https://github.com/furiosa-ai/sdk-cookbook.git
-   cd workflow-automation
+   cd workflow-automator
    python -m venv venv
    source /venv/bin/activate
    pip install -r requirements.txt
@@ -46,7 +45,7 @@ This AI Workflow Automator supports both Korean and English languages:
 - 🇰🇷 Korean: 오늘 일정 요약해서 슬랙에 보내고 노션에도 기록해
 - 🇺🇸 English: Summarize today’s schedule and send it to Slack and Notion.
 
-You can interact with the system using either language for your workflow automation needs.
+You can interact with the system using either language for your workflow automator needs.
 
 ## Usage
 
@@ -62,7 +61,7 @@ python main.py
 ## File Structure
 
 ```
-workflow_automation/
+workflow_automator/
 │
 ├── main.py                  
 ├── requirements.txt          
@@ -70,4 +69,3 @@ workflow_automation/
 ├── README.md
 └── data/
     └── basic.ics   # sample calendar for demonstration
-

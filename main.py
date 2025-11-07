@@ -11,6 +11,8 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from ics import Calendar
+from icalendar import Calendar as ICalCalendar
+from dateutil.rrule import rrulestr
 
 BASE = Path(__file__).parent
 
@@ -141,36 +143,153 @@ def fetch_events_from_ical(days: int = 1, start: Optional[datetime] = None) -> L
         except Exception as e:
             rprint(f"[yellow]Fail to fetch ICS: {e}[/yellow]")
             return []
+
+    # ⬇️ 여기부터 icalendar + dateutil 기반으로 RRULE/RDATE/EXDATE 확장
     try:
-        cal = Calendar(cal_text)
+        ical = ICalCalendar.from_ical(cal_text)
     except Exception as e:
-        rprint(f"[yellow]Fail to parse ICS: {e}[/yellow]")
+        rprint(f"[yellow]Fail to parse ICS with icalendar: {e}[/yellow]")
         return []
 
+    # 검색 윈도우(UTC 기준)
     utc = timezone.utc
     now_utc = (start or datetime.now(utc)).astimezone(utc)
     end_utc = now_utc + timedelta(days=days)
 
-    out = []
-    for ev in cal.events:
-        b = getattr(ev, "begin", None)
-        e = getattr(ev, "end", None)
-        if not b or not e:
+    def to_aware(dt) -> datetime:
+        # icalendar의 .decoded는 tz-aware일 수도, 아닐 수도 있음 → 기본은 Asia/Seoul로 해석
+        if isinstance(dt, datetime):
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=TZ).astimezone(utc)
+            return dt.astimezone(utc)
+        # all-day (date-only) 처리: 로컬 자정~자정+1 로 가정
+        return datetime.combine(dt, datetime.min.time(), tzinfo=TZ).astimezone(utc)
+
+    results: List[Dict[str, Any]] = []
+
+    for comp in ical.walk("VEVENT"):
+        try:
+            dtstart_raw = comp.decoded("DTSTART")
+        except Exception:
             continue
-        bdt = b.datetime if hasattr(b, "datetime") else None
-        edt = e.datetime if hasattr(e, "datetime") else None
-        if not bdt or not edt:
-            continue
-        if edt < now_utc or bdt > end_utc:
-            continue
-        out.append({
-            "title": ev.name or "No title",
-            "start": bdt.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
-            "end": edt.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
-            "location": getattr(ev, "location", "") or "",
-            "tz": TZ_LABEL
-        })
-    return sorted(out, key=lambda x: x["start"])
+
+        # 종료시각/지속시간 파악
+        dtend_raw = comp.decoded("DTEND", default=None)
+        duration_raw = comp.get("DURATION")
+
+        dtstart = to_aware(dtstart_raw)
+        if dtend_raw is not None:
+            dtend = to_aware(dtend_raw)
+            duration = dtend - dtstart
+        elif duration_raw is not None:
+            # DURATION이 주어진 경우
+            # icalendar가 timedelta로 파싱해줌
+            duration = duration_raw.dt if hasattr(duration_raw, "dt") else duration_raw
+        else:
+            # 종료 미기재 시 1시간짜리로 가정
+            duration = timedelta(hours=1)
+
+        title = str(comp.get("SUMMARY", "No title"))
+        location = str(comp.get("LOCATION", ""))
+
+        # 예외 날짜(제외)
+        exdates: set[datetime] = set()
+        for ex in comp.get("EXDATE", []):
+            try:
+                # ex.dts는 icalendar v5에서 제공, v4에선 .dts가 없을 수 있어 fallback
+                seq = getattr(ex, "dts", None)
+                if seq is not None:
+                    for d in seq:
+                        exdates.add(to_aware(d.dt))
+                else:
+                    # bytes → component로 파싱되어 있을 수도 있음
+                    exval = ex.to_ical()
+                    # 보수적으로: 여러 날짜가 들어올 수 있어 스플릿 불가 시 스킵
+                    # (복잡한 케이스는 드물어 간략화)
+                    pass
+            except Exception:
+                continue
+
+        # RDATE(추가 포함)
+        rdates: List[datetime] = []
+        for rd in comp.get("RDATE", []):
+            try:
+                seq = getattr(rd, "dts", None)
+                if seq is not None:
+                    for d in seq:
+                        rdates.append(to_aware(d.dt))
+            except Exception:
+                continue
+
+        rrule_prop = comp.get("RRULE")
+        if rrule_prop:
+            # RRULE을 문자열로 변환
+            try:
+                rrule_bytes = rrule_prop.to_ical()  # e.g. b'FREQ=WEEKLY;BYDAY=MO,WE,FR'
+                rrule_str = rrule_bytes.decode() if isinstance(rrule_bytes, (bytes, bytearray)) else str(rrule_bytes)
+            except Exception:
+                # dict 형태일 수도 있음
+                if isinstance(rrule_prop, dict):
+                    # {'FREQ': ['WEEKLY'], 'BYDAY': ['MO','WE','FR']} → 'FREQ=WEEKLY;BYDAY=MO,WE,FR'
+                    parts = []
+                    for k, v in rrule_prop.items():
+                        vv = v if isinstance(v, list) else [v]
+                        parts.append(f"{k}={','.join(map(str, vv))}")
+                    rrule_str = ";".join(parts)
+                else:
+                    rrule_str = str(rrule_prop)
+
+            # rrulestr는 'FREQ=…' 형태 그대로 받음
+            rule = rrulestr(rrule_str, dtstart=dtstart.astimezone(utc))
+
+            # 검색구간의 발생 인스턴스 확장
+            for occ in rule.between(now_utc, end_utc, inc=True):
+                if occ in exdates:
+                    continue
+                start_utc = occ
+                end_utc_inst = start_utc + duration
+                # 윈도우 교차 판정
+                if end_utc_inst <= now_utc or start_utc >= end_utc:
+                    continue
+                results.append({
+                    "title": title or "No title",
+                    "start": start_utc.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+                    "end": end_utc_inst.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+                    "location": location,
+                    "tz": TZ_LABEL
+                })
+
+            # RDATE로 추가 포함된 단발 인스턴스도 확장
+            for rdt in rdates:
+                start_utc_r = rdt
+                end_utc_r = start_utc_r + duration
+                if end_utc_r <= now_utc or start_utc_r >= end_utc:
+                    continue
+                if start_utc_r in exdates:
+                    continue
+                results.append({
+                    "title": title or "No title",
+                    "start": start_utc_r.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+                    "end": end_utc_r.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+                    "location": location,
+                    "tz": TZ_LABEL
+                })
+
+        else:
+            # 반복 아님: 단발 이벤트 윈도우 교차 여부로 포함
+            start_utc = dtstart
+            end_utc_inst = dtstart + duration if dtend_raw is None else to_aware(dtend_raw)
+            if not (end_utc_inst <= now_utc or start_utc >= end_utc):
+                results.append({
+                    "title": title or "No title",
+                    "start": start_utc.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+                    "end": end_utc_inst.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+                    "location": location,
+                    "tz": TZ_LABEL
+                })
+
+    # 정렬
+    return sorted(results, key=lambda x: (x["start"], x["end"], x["title"]))
 
 def summarize_events(events: List[Dict[str, Any]], lang: str) -> str:
     if not events:
@@ -244,9 +363,7 @@ def plan_from_nl(user_text: str, lang: str) -> Dict[str, Any]:
 가능한 action:
 - "calendar_summary": 오늘/내일/이번주 일정 요약 → 슬랙 → 노션 기록
 - "noop": 아무 작업 없음
-
 명령: "{user_text}"
-
 형식(이 키만):
 {{
     "action": "calendar_summary" | "noop",
@@ -263,9 +380,7 @@ Read the command and output ONLY a JSON workflow plan.
 Allowed actions:
 - "calendar_summary": summarize today's / tomorrow's / week's schedule → send to Slack → record to Notion
 - "noop": do nothing
-
 Command: "{user_text}"
-
 Format (ONLY these keys):
 {{
     "action": "calendar_summary" | "noop",
